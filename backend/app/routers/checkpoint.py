@@ -1,4 +1,8 @@
-"""断流恢复接口：维护检查点，覆盖触发检查、标记可用、标记过期等动作。"""
+"""断流恢复接口：维护检查点，覆盖触发检查、标记可用、标记过期等动作。
+
+断流恢复通过状态管理模块生成的快照整理索引装载有效内容，
+装载结果回写快照对账清单，供回收端判断引用可否解除。
+"""
 from __future__ import annotations
 
 import csv
@@ -8,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.schemas import ActionPayload, ActionResult, EntryPayload, PageResult
+from app.services import snapshot_gc
 from app.services.checkpoint import CheckpointService
 
 router = APIRouter(prefix="/api/checkpoint", tags=["断流恢复"])
@@ -65,6 +70,13 @@ def export_entries(
         headers={"Content-Disposition": 'attachment; filename="checkpoint.csv"'})
 
 
+@router.get("/recovery-queue", response_model=PageResult[dict])
+def get_recovery_queue() -> PageResult[dict]:
+    """恢复排队记录：含与快照回收重叠时的冲突登记；必须声明在 /{entry_id} 之前。"""
+    items = snapshot_gc.recovery_queue()
+    return PageResult(items=items, total=len(items), page=1, size=len(items) or 1)
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条检查点明细；不存在时给出可读的错误说明。"""
@@ -81,6 +93,15 @@ def create_entry(payload: dict[str, object]) -> ActionResult:
     if missing:
         return ActionResult(ok=False, message=f"缺少必填字段：{'、'.join(missing)}")
     return ActionResult(ok=True, message="检查点已登记", entry=entry)
+
+
+@router.post("/{entry_id}/restore", response_model=ActionResult)
+def restore_checkpoint(entry_id: int) -> ActionResult:
+    """断流恢复：通过快照整理索引装载有效内容，装载结果回写快照对账清单。"""
+    result = snapshot_gc.restore_via_index(entry_id)
+    if result is None:
+        return ActionResult(ok=False, message=f"检查点 {entry_id} 不存在或已归档")
+    return ActionResult(ok=bool(result["ok"]), message=result["message"], entry=result)
 
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)

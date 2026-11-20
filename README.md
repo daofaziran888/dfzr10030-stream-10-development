@@ -75,5 +75,25 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 快照生命周期（状态管理 × 断流恢复）
+
+算子状态快照的清理校验、回收与断流恢复装载收在
+`backend/app/services/snapshot_gc.py`，核心约定：
+
+- **快照整理索引**：依据算子状态数据与检查点的依赖关系生成
+  （`POST /api/state_store/snapshots/cleanup/validate`），断流恢复按它装载有效内容。
+- **共用引用判断**：回收端与恢复端共用 `checked_snapshot_ref` 抽取的已校验快照引用，
+  双方核对口径一致。
+- **落库失败**：不留下指向空数据的恢复点——检查点依赖改指替代内容，
+  原编号与替代内容写入索引修复记录与对账清单供追查。
+- **快照对账清单**：恢复端回写实际装载结果（`GET /api/state_store/snapshots/reconciliation`），
+  回收端据此判断引用可否解除；清单里已释放的条目不会被返回为可直接读取
+  （`GET /api/state_store/snapshots?readable=true`）。
+- **回收记录**：每次回收动作（成功或失败）都可核对
+  （`GET /api/state_store/snapshots/reclaim-records`）。
+- **断流恢复**：`POST /api/checkpoint/{id}/restore` 通过整理索引装载，
+  与回收重叠时在恢复排队里登记冲突（`GET /api/checkpoint/recovery-queue`），
+  恢复内容完整才确认，检查点始终追到实际读取的快照。
+
 领域：数据工程
 子方向：数仓与数据湖

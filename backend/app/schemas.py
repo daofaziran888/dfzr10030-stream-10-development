@@ -35,6 +35,22 @@ class ActionPayload(BaseModel):
     remark: str | None = None
 
 
+class ReclaimPayload(BaseModel):
+    """快照回收请求：可指定快照编号；支持注入一次失败演练回收/恢复冲突。"""
+
+    snapshot_ids: list[str] = Field(default_factory=list)
+    simulate_failure: bool = False
+
+
+class SnapshotRegisterPayload(BaseModel):
+    """登记算子状态快照；模拟落库失败时不留指向空数据的恢复点。"""
+
+    state_code: str
+    content: dict[str, Any] | None = None
+    expired: bool = False
+    simulate_persist_failure: bool = False
+
+
 
 class SourceBindingEntry(BaseModel):
     """数据源端明细结构。"""
